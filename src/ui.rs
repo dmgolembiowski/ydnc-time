@@ -1,4 +1,8 @@
-use tui::{
+// Copyright (C) 2023 Jonathan Ming
+// This program is distributed without any warranty; see full notice in main.rs
+// and license terms in the LICENSE file.
+
+use ratatui::{
     backend::Backend,
     style::Color,
     widgets::{Paragraph, Wrap},
@@ -7,14 +11,24 @@ use tui::{
 
 use crate::App;
 
-mod home;
-mod settings;
+mod editable_list;
+pub mod home;
+pub mod settings;
+pub mod stats;
+pub mod utils;
+pub mod widgets;
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub enum Page {
-    #[default]
-    Home,
+    Home(home::State),
+    Stats(stats::State),
     Settings(settings::State),
+}
+
+impl Default for Page {
+    fn default() -> Self {
+        Self::Home(Default::default())
+    }
 }
 
 fn number_to_color(i: u8) -> Color {
@@ -38,7 +52,8 @@ fn message_widget(app: &App) -> Paragraph {
 
 pub fn draw<B: Backend>(f: &mut Frame<B>, app: &mut App) {
     match app.selected_page {
-        Page::Home => home::draw(f, app),
+        Page::Home(_) => home::draw(f, app),
+        Page::Stats(_) => stats::draw(f, app),
         Page::Settings(_) => settings::draw(f, app),
     }
 }

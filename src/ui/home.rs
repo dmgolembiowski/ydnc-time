@@ -1,33 +1,67 @@
+// Copyright (C) 2023 Jonathan Ming
+// This program is distributed without any warranty; see full notice in main.rs
+// and license terms in the LICENSE file.
+
 use chrono::{Local, NaiveTime, Timelike};
-use tui::{
+use ratatui::{
     backend::Backend,
     layout::{Alignment, Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
-    text::{Span, Spans},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    style::{Color, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
     Frame,
 };
 
-use crate::{legend, App, TimeLog};
+use crate::{legend, utils::datetime_with_zeroed_time, App, TimeLog};
 
-use super::{message_widget, number_to_color};
+use super::{
+    editable_list::EditableList,
+    message_widget, number_to_color,
+    utils::{self, blinky_if_index_matches, bold},
+    Page,
+};
 
-/// Returns a tuple of start (inclusive) and end (exclusive) x-coordinates for drawing the specified
-/// absolute duration
+#[derive(Debug, Default)]
+pub enum State {
+    #[default]
+    Viewing,
+    Editing {
+        state: EditableList<TableState, TimeLog>,
+        cursor_pos: usize,
+        delete_pending: bool,
+    },
+}
+
+impl State {
+    pub fn editable(options: Vec<TimeLog>) -> Self {
+        Self::Editing {
+            state: EditableList::new(options),
+            cursor_pos: 0,
+            delete_pending: false,
+        }
+    }
+}
+
+/// Returns a tuple of start (inclusive) and end (exclusive) x-coordinates for
+/// drawing the specified absolute duration
 fn duration_to_x_coords(start: NaiveTime, end: NaiveTime, max_width: u16) -> (u16, u16) {
-    // - Width is in "pixels" (technically not pixels but whatever I'm gonna call them that)
-    // - The width must be divisible by 24 (this is guaranteed by the layout in ui() at the moment)
+    // - Width is in "pixels" (technically not pixels but whatever I'm gonna
+    // call them that)
+    // - The width must be divisible by 24 (this is guaranteed by the layout in
+    // ui() at the moment)
     // - Each 1/24th of width is an hour
-    // By relying on these facts we can compute the coordinates in pixels of a given duration:
+    // By relying on these facts we can compute the coordinates in pixels of a
+    // given duration:
 
     // num_secs / number_of_secs_in_day = % of the day this duration fills
     // multiply that % by the width then round and clamp
-    // `as` automatically clamps to the max/min value of the primitive integer type
+    // `as` automatically clamps to the max/min value of the integer type
 
-    // Okay also I want my table scale to go from 05:00 to 04:59, instead of 00:00 to 23:59. Good
-    // thing NaiveTime subraction wraps around! This makes it so that values approaching (but not
-    // exceeding) 5am will be at the "end" of the table, while numbers at and after 5am will be at
-    // the "beginning"
+    // Okay also I want my table scale to go from 05:00 to 04:59, instead of
+    // 00:00 to 23:59. Good thing NaiveTime subraction wraps around! This makes
+    // it so that values approaching (but not exceeding) 5am will be at the
+    // "end" of the table, while numbers at and after 5am will be at the
+    // "beginning"
     let start_percent_of_day =
         ((start - chrono::Duration::hours(5)).num_seconds_from_midnight() as f32) / 86400.0;
     let end_percent_of_day =
@@ -40,7 +74,9 @@ fn duration_to_x_coords(start: NaiveTime, end: NaiveTime, max_width: u16) -> (u1
 }
 
 fn make_today_row(app: &App, max_width: u16) -> (Row, Vec<Constraint>) {
-    let table_starts_at = Local::today().and_hms(5, 0, 0);
+    let table_starts_at = datetime_with_zeroed_time(&Local::now())
+        .with_hour(5)
+        .unwrap();
     let table_ends_at =
         table_starts_at + chrono::Duration::hours(24) - chrono::Duration::nanoseconds(1);
 
@@ -57,8 +93,8 @@ fn make_today_row(app: &App, max_width: u16) -> (Row, Vec<Constraint>) {
     let mut row: Vec<Cell> = Vec::new();
     let mut current_px = 0;
 
-    // Assume it's already sorted, since load() does this, and you're not manually typing in entries
-    // in the future are you ;)
+    // Assume it's already sorted, since load() does this, and you're not
+    // manually typing in entries in the future are you ;)
     for (i, curr_tl) in today_iter {
         // Insert the current cell
         let coords = if let Some(end) = curr_tl.end {
@@ -98,12 +134,10 @@ fn format_total_time(today: &[TimeLog]) -> String {
         acc + (tl.end.as_ref().copied().unwrap_or(now) - tl.start)
     });
     // Chrono's Duration doesn't get a format method, but NaiveTime does
-    (NaiveTime::from_hms(0, 0, 0) + total)
-        .format("%T")
-        .to_string()
+    (NaiveTime::MIN + total).format("%T").to_string()
 }
 
-pub fn draw<B: Backend>(f: &mut Frame<B>, app: &App) {
+pub fn draw<B: Backend>(f: &mut Frame<B>, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .vertical_margin(1)
@@ -121,30 +155,15 @@ pub fn draw<B: Backend>(f: &mut Frame<B>, app: &App) {
         )
         .split(f.size());
 
-    let help_message = Paragraph::new(Spans::from(vec![
-        Span::styled("1-8 keys", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(": track time | "),
-        Span::styled("0", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("/"),
-        Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(": stop tracking | "),
-        // Span::styled("e", Style::default().add_modifier(Modifier::BOLD)),
-        // Span::raw(": edit entries | "),
-        Span::styled("s", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(": settings | "),
-        Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(": quit"),
-    ]));
-    f.render_widget(help_message, chunks[0]);
-
-    // Because integer division is truncated, we might end up with a situation where our columns
-    // would have been e.g. 142/24 = 5.9166666667 pixels wide, which would get truncated to 5px,
-    // which would make our table look all squished and only take up part of the screen. To fix
-    // this, we have to ensure that our table inner rectangle width is always divisible by 24.
+    // Because integer division is truncated, we might end up with a situation
+    // where our columns would have been e.g. 142/24 = 5.9166666667 pixels wide,
+    // which would get truncated to 5px, which would make our table look all
+    // squished and only take up part of the screen. To fix this, we ensure that
+    // our table inner rectangle width is always divisible by 24.
 
     let table_block = Block::default().borders(Borders::ALL).title("Today");
-    // Blocks with borders take up 1px on either side, so we have to increase the whole table Rect
-    // width by 2
+    // Blocks with borders take up 1px on either side, so we have to increase
+    // the whole table Rect width by 2
     let nice_table_width = ((table_block.inner(chunks[1]).width / 24) * 24) + 2;
     let table_horiz_margin = (chunks[1].width - nice_table_width) / 2;
     let table_layout = Layout::default()
@@ -199,36 +218,163 @@ pub fn draw<B: Backend>(f: &mut Frame<B>, app: &App) {
     f.render_widget(total_time, status_row[0]);
     f.render_widget(tracker_status, status_row[1]);
 
-    let today_start_at = if app.today.len() + 2 > (chunks[4].height as usize) {
-        (app.today.len() + 2) - (chunks[4].height as usize)
-    } else {
-        0
-    };
-
     let label_len = app
         .preferences
         .labels
         .as_ref()
         .map_or(1, |lbls| lbls.iter().map(|s| s.len() as u16).max().unwrap());
 
-    // -_- I wish the tui crate did the widths() fn signature better. This shouldn't have to be
-    // necessary, but it is b/c of how they typed the param.
     let widths = [
         Constraint::Length(label_len + 2),
         Constraint::Percentage(100),
     ];
-    let time_entries = Table::new(
-        app.today[today_start_at..]
-            .iter()
-            .map(|time_log| time_log.to_row(app))
-            .collect::<Vec<Row>>(),
-    )
-    .block(Block::default().borders(Borders::ALL))
-    .widths(&widths)
-    .column_spacing(1);
-    f.render_widget(time_entries, chunks[4]);
 
     f.render_widget(message_widget(app), chunks[5]);
+
+    let labels = app.preferences.labels.as_ref();
+    if let Page::Home(ref mut state_type) = app.selected_page {
+        if let State::Editing {
+            ref mut state,
+            ref cursor_pos,
+            ref delete_pending,
+        } = state_type
+        {
+            let help_message = Paragraph::new(Line::from(if *delete_pending {
+                vec![
+                    bold("Are you sure?"),
+                    Span::raw(" Press "),
+                    bold("x"),
+                    Span::raw(" to confirm deletion, "),
+                    bold("Esc"),
+                    Span::raw(" to cancel"),
+                ]
+            } else if state.editing {
+                vec![
+                    bold("Esc"),
+                    Span::raw(": cancel | "),
+                    bold("Enter"),
+                    Span::raw(": save | "),
+                    bold("←+→"),
+                    Span::raw(": move cursor | "),
+                    bold("0-9"),
+                    Span::raw(": edit | "),
+                    bold("Bksp"),
+                    Span::raw(": (at end of log) make ongoing"),
+                ]
+            } else {
+                vec![
+                    bold("q"),
+                    Span::raw("/"),
+                    bold("Esc"),
+                    Span::raw(": back | "),
+                    bold("k+j"),
+                    Span::raw("/"),
+                    bold("↑+↓"),
+                    Span::raw(": up+down | "),
+                    bold("Enter"),
+                    Span::raw(": edit | "),
+                    bold("i"),
+                    Span::raw(": insert | "),
+                    bold("d"),
+                    Span::raw(": delete | changes saved automatically"),
+                ]
+            }));
+            f.render_widget(help_message, chunks[0]);
+
+            state.draw_table(f, chunks[4], &widths, |_i, item, input, editing| -> Row {
+                if editing {
+                    // cursor positions will go:
+                    // [foo] from 00:00:00 to 00:00:00
+                    //  0         12 34 56    78 90 12
+                    let start = input.start.format("%H%M%S").to_string();
+                    let end = input
+                        .end
+                        .as_ref()
+                        .map_or(String::new(), |end| end.format("%H%M%S").to_string());
+
+                    let mut editable_numbers =
+                        start.chars().chain(end.chars()).enumerate().map(|(i, c)| {
+                            utils::blinky_if_index_matches(*cursor_pos, i + 1, c.to_string())
+                        });
+
+                    let mut spans = vec![Span::raw("from ")];
+
+                    for (i, num) in editable_numbers.by_ref().take(6).enumerate() {
+                        spans.push(num);
+                        if i < 4 && i % 2 == 1 {
+                            spans.push(Span::raw(":"));
+                        }
+                    }
+
+                    if input.end.is_some() {
+                        spans.push(Span::raw(" to "));
+
+                        for (i, num) in editable_numbers.enumerate() {
+                            spans.push(num);
+                            if i < 4 && i % 2 == 1 {
+                                spans.push(Span::raw(":"));
+                            }
+                        }
+                    } else {
+                        spans.push(Span::raw(" - "));
+                        spans.push(blinky_if_index_matches(*cursor_pos, 7, "ongoing"));
+                    }
+
+                    Row::new(vec![
+                        Cell::from(Line::from(vec![
+                            Span::raw("["),
+                            utils::blinky_if_index_matches(
+                                *cursor_pos,
+                                0,
+                                input.resolve_label(labels),
+                            ),
+                            Span::raw("]"),
+                        ])),
+                        Cell::from(Line::from(spans)),
+                    ])
+                } else {
+                    item.to_row_unstyled(labels)
+                }
+            });
+        } else {
+            let help_message = Paragraph::new(Line::from(vec![
+                bold("q"),
+                Span::raw(": quit | "),
+                bold("1-8 keys"),
+                Span::raw(": start | "),
+                bold("0"),
+                Span::raw("/"),
+                bold("Esc"),
+                Span::raw(": stop | "),
+                bold("e"),
+                Span::raw(": edit | "),
+                bold("h"),
+                Span::raw(": history | "),
+                bold("s"),
+                Span::raw(": settings"),
+            ]));
+            f.render_widget(help_message, chunks[0]);
+
+            let today_start_at = if app.today.len() + 2 > (chunks[4].height as usize) {
+                (app.today.len() + 2) - (chunks[4].height as usize)
+            } else {
+                0
+            };
+
+            let time_entries = Table::new(
+                app.today[today_start_at..]
+                    .iter()
+                    .map(|time_log| time_log.to_row(app.preferences.labels.as_ref()))
+                    .collect::<Vec<Row>>(),
+            )
+            .block(Block::default().borders(Borders::ALL))
+            .widths(&widths)
+            .column_spacing(1);
+            f.render_widget(time_entries, chunks[4]);
+        }
+    } else {
+        panic!("Can't render home page when the app isn't in home page state!")
+    };
 }
 
 #[cfg(test)]
@@ -240,93 +386,96 @@ mod tests {
         // max_width is supposed to always be divisible by 24
         let mw = 24;
         assert_eq!(
-            (0, 24), // Remember end is exclusive, think of it like a range: 0..24 and not 0..=24
+            // Remember end is exclusive, think of it like a range: 0..24 and
+            // not 0..=24
+            (0, 24),
             duration_to_x_coords(
-                NaiveTime::from_hms(5, 0, 0),
-                NaiveTime::from_hms(4, 59, 59),
+                NaiveTime::from_hms_opt(5, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(4, 59, 59).unwrap(),
                 mw
             )
         );
         assert_eq!(
             (0, 1),
             duration_to_x_coords(
-                NaiveTime::from_hms(5, 0, 0),
-                NaiveTime::from_hms(6, 0, 0),
+                NaiveTime::from_hms_opt(5, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
                 mw
             )
         );
         assert_eq!(
             (0, 0),
             duration_to_x_coords(
-                NaiveTime::from_hms(5, 0, 0),
-                NaiveTime::from_hms(5, 29, 0),
+                NaiveTime::from_hms_opt(5, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(5, 29, 0).unwrap(),
                 mw
             )
         );
         assert_eq!(
             (0, 1),
             duration_to_x_coords(
-                NaiveTime::from_hms(5, 0, 0),
-                NaiveTime::from_hms(5, 30, 0),
+                NaiveTime::from_hms_opt(5, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(5, 30, 0).unwrap(),
                 mw
             )
         );
         assert_eq!(
             (2, 2 + 2),
             duration_to_x_coords(
-                NaiveTime::from_hms(7, 0, 0),
-                NaiveTime::from_hms(9, 0, 0),
+                NaiveTime::from_hms_opt(7, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
                 mw
             )
         );
         assert_eq!(
             (6, 6 + 9),
             duration_to_x_coords(
-                NaiveTime::from_hms(11, 0, 0),
-                NaiveTime::from_hms(19, 31, 0),
+                NaiveTime::from_hms_opt(11, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(19, 31, 0).unwrap(),
                 mw
             )
         );
         assert_eq!(
             (19, 24),
             duration_to_x_coords(
-                NaiveTime::from_hms(0, 0, 0),
-                NaiveTime::from_hms(4, 59, 59),
+                NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(4, 59, 59).unwrap(),
                 mw
             )
         );
         assert_eq!(
             (17, 24),
             duration_to_x_coords(
-                NaiveTime::from_hms(22, 0, 0),
-                NaiveTime::from_hms(4, 59, 59),
+                NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(4, 59, 59).unwrap(),
                 mw
             )
         );
         assert_eq!(
-            // this one is the worst-case rounding scenario, because at 1px per hour resolution,
-            // XX:29:59 rounds down to XX and YY:30:00 rounds up to YY+1, -- in this case that
-            // causes this 1h+1s duration to show up as 2 hours!
+            // this one is the worst-case rounding scenario, because at 1px per
+            // hour resolution, XX:29:59 rounds down to XX and YY:30:00 rounds
+            // up to YY+1, -- in this case that causes a 1h+1s duration to show
+            // up as 2 hours!
             (18, 18 + 2),
             duration_to_x_coords(
-                NaiveTime::from_hms(23, 29, 59),
-                NaiveTime::from_hms(0, 30, 0),
+                NaiveTime::from_hms_opt(23, 29, 59).unwrap(),
+                NaiveTime::from_hms_opt(0, 30, 0).unwrap(),
                 mw
             )
         );
         assert_eq!(
             (19, 19 + 1),
             duration_to_x_coords(
-                NaiveTime::from_hms(23, 30, 0),
-                NaiveTime::from_hms(0, 30, 0),
+                NaiveTime::from_hms_opt(23, 30, 0).unwrap(),
+                NaiveTime::from_hms_opt(0, 30, 0).unwrap(),
                 mw
             )
         );
         assert_eq!(
             (18, 18 + 1),
             duration_to_x_coords(
-                NaiveTime::from_hms(23, 0, 0),
-                NaiveTime::from_hms(0, 29, 0),
+                NaiveTime::from_hms_opt(23, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(0, 29, 0).unwrap(),
                 mw
             )
         );
@@ -339,48 +488,48 @@ mod tests {
         assert_eq!(
             (0, 48),
             duration_to_x_coords(
-                NaiveTime::from_hms(5, 0, 0),
-                NaiveTime::from_hms(4, 59, 59),
+                NaiveTime::from_hms_opt(5, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(4, 59, 59).unwrap(),
                 mw
             )
         );
         assert_eq!(
             (0, 1),
             duration_to_x_coords(
-                NaiveTime::from_hms(5, 0, 0),
-                NaiveTime::from_hms(5, 29, 0),
+                NaiveTime::from_hms_opt(5, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(5, 29, 0).unwrap(),
                 mw
             )
         );
         assert_eq!(
             (0, 0),
             duration_to_x_coords(
-                NaiveTime::from_hms(5, 0, 0),
-                NaiveTime::from_hms(5, 14, 0),
+                NaiveTime::from_hms_opt(5, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(5, 14, 0).unwrap(),
                 mw
             )
         );
         assert_eq!(
             (0, 2),
             duration_to_x_coords(
-                NaiveTime::from_hms(5, 0, 0),
-                NaiveTime::from_hms(6, 0, 0),
+                NaiveTime::from_hms_opt(5, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(6, 0, 0).unwrap(),
                 mw
             )
         );
         assert_eq!(
             (10, 10 + 5), // Adding 5 half-hours of time from 10:00 to 12:30
             duration_to_x_coords(
-                NaiveTime::from_hms(10, 0, 0),
-                NaiveTime::from_hms(12, 30, 0),
+                NaiveTime::from_hms_opt(10, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(12, 30, 0).unwrap(),
                 mw
             )
         );
         assert_eq!(
             (34, 48),
             duration_to_x_coords(
-                NaiveTime::from_hms(22, 0, 0),
-                NaiveTime::from_hms(4, 59, 59),
+                NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(4, 59, 59).unwrap(),
                 mw
             )
         );

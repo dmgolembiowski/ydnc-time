@@ -1,5 +1,9 @@
+// Copyright (C) 2023 Jonathan Ming
+// This program is distributed without any warranty; see full notice in main.rs
+// and license terms in the LICENSE file.
+
 use lazy_static::lazy_static;
-use tui::{
+use ratatui::{
     layout::Constraint,
     widgets::{Row, Table},
 };

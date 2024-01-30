@@ -1,24 +1,23 @@
-# ydnc-time [![GitHub license]][license] [![GitHub top language]]() [![GitHub latest release]][releases]
-
-[github license]: https://img.shields.io/github/license/jming422/ydnc-time
-[license]: https://github.com/jming422/ydnc-time/blob/main/LICENSE
-[github top language]: https://img.shields.io/github/languages/top/jming422/ydnc-time
-[github latest release]: https://img.shields.io/github/v/release/jming422/ydnc-time
-[releases]: https://github.com/jming422/ydnc-time/releases
+# ydnc-time-fork
+>> The original source code is at https://codeberg.org/jming422/ydnc-time
 
 **Y**ou **D**on't **N**eed the **C**loud to log your time
 
 ---
 
-This is software to help you track how much time you spend on different types of activities. It is highly opinionated, entirely local, and terminal only.
+This is software to help you track how much time you spend on different types of activities. It is entirely local, terminal only, and very lightweight.
 
-![screenshot](https://raw.githubusercontent.com/jming422/ydnc-time/main/screenshots/screenshot1.png)
+![screenshot](https://codeberg.org/jming422/ydnc-time/raw/branch/main/screenshots/screenshot4.png)
+![another screenshot](https://codeberg.org/jming422/ydnc-time/raw/branch/main/screenshots/screenshot2.png)
 
 ## Main Features
 
+- Fast
+  - On my laptop during regular use, app startup time (loading a timelog from save and rendering the UI) does not exceed 40ms.
 - Cross-platform
 - Works well even with very low terminal resolution
-- Autosaves time log & user settings to a plain-text format ([RON](https://github.com/ron-rs/ron))
+  - Perfect for squishing into the corner of your screen so it stays present but out of the way
+- Autosaves time log & user settings to a plain-text format ([RON](https://crates.io/crates/ron))
   - Saves to the OS-appropriate config & data directories. See the [directories](https://crates.io/crates/directories) crate for details.
 - Controllable using the keyboard or using a [Timeular Tracker](https://timeular.com/tracker/)
 
@@ -48,7 +47,7 @@ Then these aren't the ~droids~ software you're looking for -- there are plenty o
 
 YDNC applications are less "anti-cloud" and more "do I _have_ to use the cloud?" For some people and workflows, the cloud is simply not necessary, and including it introduces application latency and other undesirable side effects. If you find you're not even using the cloud features like collaboration or cross-device syncing, then why not try removing the cloud from the equation? You'll probably be surprised at how performant software can be when it's running on your own computer!
 
-I suppose, if you really wanted, you could locate where YDNC stores its save files on disk and somehow sync that folder to the cloud storage of your choice. But that's not in scope for this project, so I'll leave it as an exercise for the reader.
+I suppose if you wanted, you could locate where YDNC stores its save files on disk and somehow sync that folder to the cloud storage of your choice. But that's not in scope for this project, so I'll leave it as an exercise for the reader.
 
 ## References
 

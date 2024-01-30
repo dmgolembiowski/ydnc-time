@@ -1,11 +1,11 @@
 [package]
 name = "ydnc-time"
-version = "0.2.2"
+version = "0.5.3-alpha"
 authors = ["Jonathan Ming"]
 edition = "2021"
 description = "You don't need the cloud to log your time"
 repository = "https://github.com/jming422/ydnc-time"
-license = "Apache-2.0 WITH LLVM-exception"
+license = "AGPL-3.0-or-later"
 keywords = ["terminal", "time", "tui", "dashboard"]
 categories = ["command-line-utilities", "date-and-time", "visualization"]
 exclude = ["/screenshots"]
@@ -13,9 +13,11 @@ exclude = ["/screenshots"]
 [dependencies]
 anyhow = "1"
 btleplug = "0.10"
-chrono = { version = "0.4", features = ["serde"] }
-crossterm = "0.25"
-directories = "4"
+chrono = { version = "0.4.24", features = ["serde"] }
+crossterm = "0.26"
+directories = "5"
+humantime = "2"
+itertools = "0.10"
 lazy_static = "1"
 ron = "0.8"
 serde = { version = "1", features = ["derive"] }
@@ -24,5 +26,5 @@ tokio-stream = "0.1"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tui = "0.19"
+ratatui = { version = "0.21", features = ["all-widgets"] }
 uuid = "1"

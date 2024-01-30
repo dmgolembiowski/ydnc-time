@@ -1,37 +1,21 @@
-use tui::{
+// Copyright (C) 2023 Jonathan Ming
+// This program is distributed without any warranty; see full notice in main.rs
+// and license terms in the LICENSE file.
+
+use ratatui::{
     backend::Backend,
     layout::{Constraint, Direction, Layout},
     style::{Modifier, Style},
-    text::{Span, Spans},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    text::{Line, Span, Text},
+    widgets::{Block, Borders, ListState, Paragraph},
     Frame,
 };
 
 use crate::App;
 
-use super::{message_widget, Page};
+use super::{editable_list::EditableList, message_widget, utils::bold, Page};
 
-#[derive(Debug, Default)]
-pub struct State {
-    pub editing: bool,
-    pub list_state: ListState,
-    pub input: String,
-    pub caps_lock: bool,
-}
-
-impl State {
-    pub fn select_prev(&mut self) {
-        let current = self.list_state.selected().unwrap_or(0);
-        let prev = if current == 0 { 7 } else { current - 1 };
-        self.list_state.select(Some(prev));
-    }
-
-    pub fn select_next(&mut self) {
-        let current = self.list_state.selected().unwrap_or(7);
-        let next = if current == 7 { 0 } else { current + 1 };
-        self.list_state.select(Some(next));
-    }
-}
+pub type State = EditableList<ListState, String>;
 
 pub fn draw<B: Backend>(f: &mut Frame<B>, app: &mut App) {
     let open_entry = app.open_entry_number();
@@ -39,7 +23,7 @@ pub fn draw<B: Backend>(f: &mut Frame<B>, app: &mut App) {
     let state = if let Page::Settings(ref mut state) = app.selected_page {
         state
     } else {
-        panic!("Can't render settings page when the app is in home page state!")
+        panic!("Can't render settings page when the app isn't in settings page state!")
     };
 
     let chunks = Layout::default()
@@ -57,66 +41,49 @@ pub fn draw<B: Backend>(f: &mut Frame<B>, app: &mut App) {
         )
         .split(f.size());
 
-    let help_message = Paragraph::new(Spans::from(if state.editing {
+    let help_message = Paragraph::new(Line::from(if state.editing {
         vec![
-            Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
+            bold("Esc"),
             Span::raw(": cancel | "),
-            Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
+            bold("Enter"),
             Span::raw(": save"),
         ]
     } else {
         vec![
-            Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
+            bold("q"),
             Span::raw("/"),
-            Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(": back home | "),
-            Span::styled("k+j", Style::default().add_modifier(Modifier::BOLD)),
+            bold("Esc"),
+            Span::raw(": back | "),
+            bold("k+j"),
             Span::raw("/"),
-            Span::styled("↑+↓", Style::default().add_modifier(Modifier::BOLD)),
+            bold("↑+↓"),
             Span::raw(": up+down | "),
-            Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(": change setting | changes saved automatically"),
+            bold("Enter"),
+            Span::raw(": edit | changes saved automatically"),
         ]
     }));
     f.render_widget(help_message, chunks[0]);
 
-    let active_num = Paragraph::new(Spans::from(vec![
+    let active_num = Paragraph::new(Line::from(vec![
         Span::raw("Current entry #: "),
-        Span::styled(
-            open_entry.map_or(String::from("None"), |n| n.to_string()),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
+        bold(open_entry.map_or(String::from("None"), |n| n.to_string())),
     ]))
     .block(Block::default().borders(Borders::TOP));
     f.render_widget(active_num, chunks[1]);
 
-    let settings_list = List::new(vec![ListItem::new(
-        app.preferences
-            .labels
-            .get_or_insert(Default::default())
-            .iter()
-            .enumerate()
-            .map(|(i, label)| {
-                let sel = state.list_state.selected().map_or(false, |s| s == i);
-                Spans::from(vec![
-                    Span::styled(
-                        format!("{} [{}]: ", if sel { ">" } else { " " }, i + 1),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                    if state.editing && sel {
-                        Span::styled(
-                            &state.input,
-                            Style::default().add_modifier(Modifier::UNDERLINED),
-                        )
-                    } else {
-                        Span::raw(label)
-                    },
-                ])
-            })
-            .collect::<Vec<Spans>>(),
-    )])
-    .block(Block::default().borders(Borders::ALL));
-    f.render_stateful_widget(settings_list, chunks[2], &mut state.list_state);
+    state.draw_list(f, chunks[2], render_item);
 
     f.render_widget(message_widget(app), chunks[3]);
+}
+
+fn render_item<'a>(i: usize, item: &'a String, input: &'a String, editing: bool) -> Text<'a> {
+    Line::from(vec![
+        bold(format!("[{}]: ", i + 1)),
+        if editing {
+            Span::styled(input, Style::default().add_modifier(Modifier::UNDERLINED))
+        } else {
+            Span::raw(item)
+        },
+    ])
+    .into()
 }
